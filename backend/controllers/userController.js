@@ -1,12 +1,11 @@
-
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 const dotenv = require("dotenv");
 
 dotenv.config();
-
 const uri = process.env.MONGO_URL;
+
 let client;
 
 async function connectClient() {
@@ -77,43 +76,137 @@ async function signup(req, res) {
     }
 }
 
-async function login (req, res) {
+async function login(req, res) {
     const { email, password } = req.body;
-    try{
+    try {
         await connectClient();
         const db = client.db();
         const usersCollection = db.collection("users");
         const user = await usersCollection.findOne({ email });
-        if(!user){
-            return res.status(400).json({ message: "Invalid credential!"});
+        if (!user) {
+            return res.status(400).json({ message: "Invalid credential!" });
         }
-    const isMatch = await bcrypt.compare(password, user.password);
-    if(!isMatch){
-        return res.status(400).json({ message: "Invalid credentials!"});
-    }
-    const token = jwt.sign({id:user._id}, process.env.JWT_SECRET_KEY, {expiresIn:"1h"});
-    res.json({token, userId:user._id});
-    } catch(err){
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(400).json({ message: "Invalid credentials!" });
+        }
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET_KEY, { expiresIn: "1h" });
+        res.json({ token, userId: user._id });
+    } catch (err) {
         console.error("Error during login : ", err.message);
         res.status(500).send("Server error!");
     }
-};
+}
 
-const getUserProfile = (req, res) => {
-    res.send("Profile fetched");
-};
+async function getAllUsers(req, res) {
+    try {
+        await connectClient();
+        const db = client.db();
+        const usersCollection = db.collection("users");
 
-const getAllUsers = (req, res) => {
-    res.send("All users fetched!");
-};
+        const users = await usersCollection.find({}).toArray();
+        res.json(users);
 
-const updateUserProfile = (req, res) => {
-    res.send("Profile updated!");
-};
+    } catch (err) {
+        console.error("Error during fetching : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
 
-const deleteUserProfile = (req, res) => {
-    res.send("Profile deleted!");
-};
+async function getUserProfile(req, res) {
+    const currentID = req.params.id || req.body?.userId || req.body?.id;
+    try {
+        if (!currentID || !ObjectId.isValid(currentID)) {
+            return res.status(400).json({ message: "Invalid or missing User ID!" });
+        }
+
+        await connectClient();
+        const db = client.db();
+        const usersCollection = db.collection("users");
+
+        const user = await usersCollection.findOne({
+            _id: new ObjectId(currentID),
+        });
+        if (!user) {
+            return res.status(404).json({ message: "User not found!" });
+        }
+        res.status(200).json(user);
+
+    } catch (err) {
+        console.error("Error during fetching : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
+
+async function updateUserProfile(req, res) {
+    const currentID = req.params.id || req.body?.userId || req.body?.id;
+    const { email, password } = req.body || {};
+
+    try {
+        if (!currentID || !ObjectId.isValid(currentID)) {
+            return res.status(400).json({ message: "Invalid or missing User ID!" });
+        }
+
+        await connectClient();
+        const db = client.db();
+        const usersCollection = db.collection("users");
+
+        let updateFields = {};
+        if (email) {
+            updateFields.email = email;
+        }
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+            updateFields.password = hashedPassword;
+        }
+
+        if (Object.keys(updateFields).length === 0) {
+            return res.status(400).json({ message: "Please provide email or password to update" });
+        }
+
+        const result = await usersCollection.findOneAndUpdate(
+            { _id: new ObjectId(currentID) },
+            { $set: updateFields },
+            { returnDocument: "after" }
+        );
+
+        if (!result) {
+            return res.status(404).json({ message: "User not found!" });
+        }
+        res.status(200).json({ message: "User Profile Updated!", user: result });
+
+    } catch (err) {
+        console.error("Error during updating : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
+
+async function deleteUserProfile(req, res) {
+    const currentID = req.params.id || req.body?.userId || req.body?.id;
+    try {
+        if (!currentID || !ObjectId.isValid(currentID)) {
+            return res.status(400).json({ message: "Invalid or missing User ID!" });
+        }
+
+        await connectClient();
+        const db = client.db();
+        const usersCollection = db.collection("users");
+
+        const result = await usersCollection.deleteOne({
+            _id: new ObjectId(currentID),
+        });
+
+        if (result.deletedCount === 0) {
+            return res.status(404).json({ message: "User not found!" });
+        }
+        res.status(200).json({ message: "User Profile Deleted!" });
+
+    } catch (err) {
+        console.error("Error during deleting : ", err.message);
+        res.status(500).send("Server error!");
+    }
+}
 
 module.exports = {
     getAllUsers,
