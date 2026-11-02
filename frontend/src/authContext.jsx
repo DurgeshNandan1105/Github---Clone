@@ -7,7 +7,7 @@ export const useAuth = () => {
     return useContext(AuthContext);
 }
 
-export const AuthProvider = ({Children})=>{
+export const AuthProvider = ({children})=>{
     const [currentUser, setCurrentUser] = useState(null);
     useEffect(()=>{
         const userId = localStorage.getItem('userId');
@@ -19,5 +19,5 @@ export const AuthProvider = ({Children})=>{
     const value = {
         currentUser, setCurrentUser
     }
-    return <AuthContext.Provider value={value}>{Children}</AuthContext.Provider>
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
