@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { MongoClient, ObjectId } = require("mongodb");
 const dotenv = require("dotenv");
+const Repository = require("../models/repoModel");
 
 dotenv.config();
 const uri = process.env.MONGO_URL;
@@ -45,6 +46,13 @@ async function signup(req, res) {
             });
         }
 
+        const emailExists = await usersCollection.findOne({ email });
+        if (emailExists) {
+            return res.status(400).json({
+                message: "Email already registered!"
+            });
+        }
+
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -65,11 +73,10 @@ async function signup(req, res) {
             { expiresIn: "1h" }
         );
 
-        return res.status(201).json({ token, userId: result.insertId });
+        return res.status(201).json({ token, userId: result.insertedId });
 
     } catch (err) {
         console.error("Error during signup:", err);
-
         return res.status(500).json({
             message: "Server error"
         });
@@ -79,12 +86,16 @@ async function signup(req, res) {
 async function login(req, res) {
     const { email, password } = req.body;
     try {
+        if (!email || !password) {
+            return res.status(400).json({ message: "Email and password are required!" });
+        }
+
         await connectClient();
         const db = client.db();
         const usersCollection = db.collection("users");
         const user = await usersCollection.findOne({ email });
         if (!user) {
-            return res.status(400).json({ message: "Invalid credential!" });
+            return res.status(400).json({ message: "Invalid credentials!" });
         }
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
@@ -94,7 +105,7 @@ async function login(req, res) {
         res.json({ token, userId: user._id });
     } catch (err) {
         console.error("Error during login : ", err.message);
-        res.status(500).send("Server error!");
+        res.status(500).json({ message: "Server error!" });
     }
 }
 
@@ -104,12 +115,12 @@ async function getAllUsers(req, res) {
         const db = client.db();
         const usersCollection = db.collection("users");
 
-        const users = await usersCollection.find({}).toArray();
+        const users = await usersCollection.find({}, { projection: { password: 0 } }).toArray();
         res.json(users);
 
     } catch (err) {
-        console.error("Error during fetching : ", err.message);
-        res.status(500).send("Server error!");
+        console.error("Error during fetching users: ", err.message);
+        res.status(500).json({ message: "Server error!" });
     }
 }
 
@@ -124,23 +135,26 @@ async function getUserProfile(req, res) {
         const db = client.db();
         const usersCollection = db.collection("users");
 
-        const user = await usersCollection.findOne({
-            _id: new ObjectId(currentID),
-        });
+        const user = await usersCollection.findOne(
+            { _id: new ObjectId(currentID) },
+            { projection: { password: 0 } }
+        );
         if (!user) {
             return res.status(404).json({ message: "User not found!" });
         }
-        res.status(200).json(user);
+
+        const userRepos = await Repository.find({ owner: user._id });
+        res.status(200).json({ ...user, repositories: userRepos || [] });
 
     } catch (err) {
-        console.error("Error during fetching : ", err.message);
-        res.status(500).send("Server error!");
+        console.error("Error during fetching profile: ", err.message);
+        res.status(500).json({ message: "Server error!" });
     }
 }
 
 async function updateUserProfile(req, res) {
     const currentID = req.params.id || req.body?.userId || req.body?.id;
-    const { email, password } = req.body || {};
+    const { email, password, username } = req.body || {};
 
     try {
         if (!currentID || !ObjectId.isValid(currentID)) {
@@ -155,6 +169,9 @@ async function updateUserProfile(req, res) {
         if (email) {
             updateFields.email = email;
         }
+        if (username) {
+            updateFields.username = username;
+        }
         if (password) {
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(password, salt);
@@ -162,13 +179,13 @@ async function updateUserProfile(req, res) {
         }
 
         if (Object.keys(updateFields).length === 0) {
-            return res.status(400).json({ message: "Please provide email or password to update" });
+            return res.status(400).json({ message: "Please provide email, username, or password to update" });
         }
 
         const result = await usersCollection.findOneAndUpdate(
             { _id: new ObjectId(currentID) },
             { $set: updateFields },
-            { returnDocument: "after" }
+            { returnDocument: "after", projection: { password: 0 } }
         );
 
         if (!result) {
@@ -177,8 +194,8 @@ async function updateUserProfile(req, res) {
         res.status(200).json({ message: "User Profile Updated!", user: result });
 
     } catch (err) {
-        console.error("Error during updating : ", err.message);
-        res.status(500).send("Server error!");
+        console.error("Error during updating profile: ", err.message);
+        res.status(500).json({ message: "Server error!" });
     }
 }
 
@@ -200,11 +217,14 @@ async function deleteUserProfile(req, res) {
         if (result.deletedCount === 0) {
             return res.status(404).json({ message: "User not found!" });
         }
+
+        await Repository.deleteMany({ owner: new ObjectId(currentID) });
+
         res.status(200).json({ message: "User Profile Deleted!" });
 
     } catch (err) {
-        console.error("Error during deleting : ", err.message);
-        res.status(500).send("Server error!");
+        console.error("Error during deleting profile: ", err.message);
+        res.status(500).json({ message: "Server error!" });
     }
 }
 
